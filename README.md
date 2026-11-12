@@ -32,6 +32,8 @@ HTTP специально вынесен из плагина в отдельны
 
 - плагин отвечает только за native tools внутри LM Studio;
 - REST и MCP живут в `lm-computer.service` и не зависят от LM Studio;
+- MCP-клиент не считается приложением LM Chat: если REST никто не опрашивает,
+  подтверждение для `shell_run` показывается через `zenity`;
 - у сервиса и native tools разные очереди подтверждений, но обе используют
   `zenity`, пока в LM Chat нет экрана подтверждений.
 
@@ -349,7 +351,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 На Ubuntu 26.04 проверены standalone-сервис на `1236`/`1237`, REST
 `/api/status` и MCP `initialize`.
 
-Юнит-тесты: 30/30 (`npm test`).
+Юнит-тесты: 32/32 (`npm test`).
 
 ## Ограничения
 

@@ -1,6 +1,6 @@
 {
   "name": "lm-computer-plugin",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "LM Studio plugin that gives the model controlled access to the host computer.",
   "homepage": "https://github.com/Spe4naz/lm-computer",

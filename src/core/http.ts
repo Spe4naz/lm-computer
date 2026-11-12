@@ -170,7 +170,9 @@ export class HttpApi {
         this.sendJson(res, 401, { ok: false, error: "Unauthorized" });
         return;
       }
-      this.service.markAppSeen();
+      // Do not call markAppSeen here: an MCP client is not the approval UI.
+      // Otherwise approvals from opencode would wait for an app that is not
+      // polling and the zenity fallback would never appear.
       await this.handleMcp(req, res);
       return;
     }
