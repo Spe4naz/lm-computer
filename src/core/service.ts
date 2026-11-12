@@ -17,6 +17,7 @@ import { PathGuard } from "./paths";
 import { runShell as executeShell, type ShellResult } from "./shell";
 import { createToolSpecs, type ToolRuntime } from "./tools";
 import type { ToolCallContext, ToolResult, ToolSpec } from "./types";
+import type { ListenersStatus } from "./http";
 import { PLUGIN_NAME, VERSION } from "../version";
 
 export interface ServiceOptions {
@@ -34,6 +35,9 @@ export interface ServiceStatus {
   workspace: string;
   host: string;
   port: number;
+  mcpHost: string;
+  mcpPort: number;
+  listeners: ListenersStatus;
   shellEnabled: boolean;
   approvalTimeoutSec: number;
   pendingApprovals: number;
@@ -131,6 +135,9 @@ export class ComputerService implements ToolRuntime {
       workspace: this._files.root,
       host: this._config.host,
       port: this._config.port,
+      mcpHost: this._config.mcpHost,
+      mcpPort: this._config.mcpPort,
+      listeners: this.listenerStatus(),
       shellEnabled: this._config.shellEnabled,
       approvalTimeoutSec: this._config.approvalTimeoutSec,
       pendingApprovals: this.approvals.list().length,
@@ -164,18 +171,36 @@ export class ComputerService implements ToolRuntime {
     this.events.add("cancel_all", {});
   }
 
-  async startHttp(): Promise<{ host: string; port: number }> {
-    if (this.http) return { host: this._config.host, port: this._config.port };
+  async startHttp(): Promise<ListenersStatus> {
+    if (this.http) return this.http.status();
     const { HttpApi } = await import("./http");
     const api = new HttpApi(this);
-    await api.start();
+    const status = await api.start();
     this.http = api;
-    return { host: this._config.host, port: this._config.port };
+    return status;
   }
 
   async stopHttp(): Promise<void> {
     await this.http?.stop();
     this.http = undefined;
+  }
+
+  private listenerStatus(): ListenersStatus {
+    if (this.http) return this.http.status();
+    return {
+      api: {
+        enabled: this._config.apiEnabled,
+        host: this._config.host,
+        port: this._config.port,
+        listening: false,
+      },
+      mcp: {
+        enabled: this._config.mcpEnabled,
+        host: this._config.mcpHost,
+        port: this._config.mcpPort,
+        listening: false,
+      },
+    };
   }
 
   async updateConfig(patch: Partial<ComputerConfig>): Promise<PublicConfig> {

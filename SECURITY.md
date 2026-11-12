@@ -18,7 +18,10 @@ machine.
 - The token is never printed by the API. Do not commit `.env` files, tokens or
   `config.json`.
 - The web endpoints bind to `0.0.0.0` only to let LM Chat approve actions. Never
-  expose port `1236` to the internet; use a VPN or an authenticated proxy.
+  expose ports `1236` (REST) or `1237` (MCP) to the internet; use a VPN or an
+  authenticated proxy.
+- Both listeners share the same bearer token. Opening only the MCP port to a
+  client is enough for opencode; REST can stay closed to the LAN if unused.
 
 ## Approvals
 

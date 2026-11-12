@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -11,45 +11,138 @@ import { VERSION } from "../version";
 const MAX_JSON_BODY = 8 * 1024 * 1024;
 const MAX_UPLOAD_BODY = 8 * 1024 * 1024;
 
+export type ListenerKind = "api" | "mcp";
+
+export interface ListenerStatus {
+  enabled: boolean;
+  host: string;
+  port: number;
+  listening: boolean;
+  error?: string;
+}
+
+export interface ListenersStatus {
+  api: ListenerStatus;
+  mcp: ListenerStatus;
+}
+
+/**
+ * Runs the REST API and the MCP endpoint on independent listeners. A busy or
+ * failed port only disables that listener; the other one keeps working.
+ */
 export class HttpApi {
-  private server: ReturnType<typeof createServer> | undefined;
+  private readonly servers = new Map<ListenerKind, Server>();
+  private readonly statuses: ListenersStatus;
 
-  constructor(private readonly service: ComputerService) {}
+  constructor(private readonly service: ComputerService) {
+    const config = service.config;
+    this.statuses = {
+      api: {
+        enabled: config.apiEnabled,
+        host: config.host,
+        port: config.port,
+        listening: false,
+      },
+      mcp: {
+        enabled: config.mcpEnabled,
+        host: config.mcpHost,
+        port: config.mcpPort,
+        listening: false,
+      },
+    };
+  }
 
-  async start(): Promise<void> {
-    if (this.server) return;
-    const server = createServer((req, res) => {
-      this.handle(req, res).catch((error) => {
-        this.sendJson(res, 500, { ok: false, error: errorMessage(error) });
-      });
-    });
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(this.service.config.port, this.service.config.host, () => {
-        server.off("error", reject);
-        resolve();
-      });
-    });
-    this.server = server;
-    this.service.events.add("http_started", {
-      host: this.service.config.host,
-      port: this.service.config.port,
-    });
+  async start(): Promise<ListenersStatus> {
+    await this.startListener("api");
+    await this.startListener("mcp");
+    return this.status();
   }
 
   async stop(): Promise<void> {
-    const server = this.server;
-    if (!server) return;
-    this.server = undefined;
-    const closed = new Promise<void>((resolve) => {
-      server.close(() => resolve());
-    });
-    // Long-poll /api/events and open MCP streams must not keep the process up.
-    server.closeAllConnections();
-    await closed;
+    const entries = [...this.servers.entries()];
+    this.servers.clear();
+    for (const [kind] of entries) {
+      this.statuses[kind].listening = false;
+      delete this.statuses[kind].error;
+    }
+    await Promise.all(entries.map(([, server]) => closeServer(server)));
+    this.service.events.add("http_stopped", {});
   }
 
-  private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  status(): ListenersStatus {
+    return {
+      api: { ...this.statuses.api },
+      mcp: { ...this.statuses.mcp },
+    };
+  }
+
+  private async startListener(kind: ListenerKind): Promise<void> {
+    const status = this.statuses[kind];
+    if (!status.enabled) {
+      status.listening = false;
+      delete status.error;
+      return;
+    }
+    if (this.servers.has(kind)) {
+      status.listening = true;
+      return;
+    }
+    if (
+      kind === "mcp" &&
+      this.statuses.api.enabled &&
+      status.host === this.statuses.api.host &&
+      status.port === this.statuses.api.port
+    ) {
+      this.markFailed(kind, "MCP port must differ from the REST port");
+      return;
+    }
+
+    const server = createServer((req, res) => {
+      this.handle(kind, req, res).catch((error) => {
+        this.sendJson(res, 500, { ok: false, error: errorMessage(error) });
+      });
+    });
+
+    try {
+      await listen(server, status.port, status.host);
+    } catch (error) {
+      this.markFailed(kind, errorMessage(error));
+      return;
+    }
+
+    server.on("error", (error) => {
+      this.markFailed(kind, errorMessage(error));
+      this.servers.delete(kind);
+      void closeServer(server);
+    });
+
+    this.servers.set(kind, server);
+    status.listening = true;
+    delete status.error;
+    this.service.events.add("http_started", {
+      listener: kind,
+      host: status.host,
+      port: status.port,
+    });
+  }
+
+  private markFailed(kind: ListenerKind, message: string): void {
+    const status = this.statuses[kind];
+    status.listening = false;
+    status.error = message;
+    this.service.events.add("http_failed", {
+      listener: kind,
+      host: status.host,
+      port: status.port,
+      error: message,
+    });
+  }
+
+  private async handle(
+    kind: ListenerKind,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
     const url = new URL(req.url ?? "/", "http://localhost");
     this.setCors(res);
 
@@ -59,6 +152,19 @@ export class HttpApi {
       return;
     }
 
+    if (kind === "mcp") {
+      await this.handleMcpListener(req, res, url);
+      return;
+    }
+
+    await this.handleApiListener(req, res, url);
+  }
+
+  private async handleMcpListener(
+    req: IncomingMessage,
+    res: ServerResponse,
+    url: URL,
+  ): Promise<void> {
     if (url.pathname === "/mcp") {
       if (!this.authorized(req)) {
         this.sendJson(res, 401, { ok: false, error: "Unauthorized" });
@@ -69,13 +175,52 @@ export class HttpApi {
       return;
     }
 
+    // Keep health and the script-only shutdown available on the MCP port so
+    // stop.sh works when the REST listener is disabled.
     if (url.pathname === "/api/health" && req.method === "GET") {
+      this.handleHealth(req, res);
+      return;
+    }
+
+    if (url.pathname === "/api/shutdown" && req.method === "POST") {
       if (!this.authorized(req)) {
-        this.sendJson(res, 200, { ok: true, name: "lm-computer", version: VERSION });
+        this.sendJson(res, 401, { ok: false, error: "Unauthorized" });
         return;
       }
-      this.service.markAppSeen();
-      this.sendJson(res, 200, this.service.status());
+      this.shutdown(res);
+      return;
+    }
+
+    const config = this.service.config;
+    this.sendJson(res, 404, {
+      ok: false,
+      error: "Not found",
+      restApi: config.apiEnabled
+        ? `http://${config.host}:${config.port}/api`
+        : "disabled",
+    });
+  }
+
+  private async handleApiListener(
+    req: IncomingMessage,
+    res: ServerResponse,
+    url: URL,
+  ): Promise<void> {
+    if (url.pathname === "/mcp") {
+      const config = this.service.config;
+      this.sendJson(res, 404, {
+        ok: false,
+        error: config.mcpEnabled
+          ? `MCP is served on port ${config.mcpPort} at /mcp`
+          : "MCP listener is disabled",
+        mcpEnabled: config.mcpEnabled,
+        mcpPort: config.mcpPort,
+      });
+      return;
+    }
+
+    if (url.pathname === "/api/health" && req.method === "GET") {
+      this.handleHealth(req, res);
       return;
     }
 
@@ -98,6 +243,23 @@ export class HttpApi {
     }
   }
 
+  private handleHealth(req: IncomingMessage, res: ServerResponse): void {
+    if (!this.authorized(req)) {
+      this.sendJson(res, 200, { ok: true, name: "lm-computer", version: VERSION });
+      return;
+    }
+    this.service.markAppSeen();
+    this.sendJson(res, 200, this.service.status());
+  }
+
+  private shutdown(res: ServerResponse): void {
+    this.sendJson(res, 200, { ok: true, message: "shutting down" });
+    this.service.cancelAll();
+    setTimeout(() => {
+      void this.service.stopHttp();
+    }, 50);
+  }
+
   private async routeApi(
     req: IncomingMessage,
     res: ServerResponse,
@@ -112,11 +274,7 @@ export class HttpApi {
     }
 
     if (method === "POST" && pathname === "/api/shutdown") {
-      this.sendJson(res, 200, { ok: true, message: "shutting down" });
-      this.service.cancelAll();
-      setTimeout(() => {
-        void this.service.stopHttp();
-      }, 50);
+      this.shutdown(res);
       return;
     }
 
@@ -128,10 +286,18 @@ export class HttpApi {
       if (method === "PUT") {
         const body = await this.readJson(req);
         const patch = body as Record<string, unknown>;
-        if (patch.host !== undefined || patch.port !== undefined) {
+        const restartFields = [
+          "host",
+          "port",
+          "apiEnabled",
+          "mcpHost",
+          "mcpPort",
+          "mcpEnabled",
+        ].filter((field) => patch[field] !== undefined);
+        if (restartFields.length > 0) {
           this.sendJson(res, 400, {
             ok: false,
-            error: "host/port changes require a plugin restart",
+            error: `${restartFields.join(", ")} changes require a plugin restart`,
           });
           return;
         }
@@ -373,6 +539,30 @@ export class HttpApi {
     });
     res.end(text);
   }
+}
+
+function listen(server: Server, port: number, host: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const onError = (error: Error): void => {
+      server.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = (): void => {
+      server.off("error", onError);
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port, host);
+  });
+}
+
+function closeServer(server: Server): Promise<void> {
+  return new Promise<void>((resolve) => {
+    server.close(() => resolve());
+    // Long-poll /api/events and open MCP streams must not keep the process up.
+    server.closeAllConnections();
+  });
 }
 
 function errorMessage(error: unknown): string {

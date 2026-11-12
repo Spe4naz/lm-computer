@@ -6,9 +6,18 @@ import crypto from "node:crypto";
 export interface ComputerConfig {
   /** Workspace the file tools are allowed to touch. */
   workspace: string;
-  /** HTTP bind address. 0.0.0.0 makes the approval console reachable on the LAN. */
+  /** REST API bind address. 0.0.0.0 makes the approval console reachable on the LAN. */
   host: string;
+  /** REST API port used by LM Chat and stop.sh. */
   port: number;
+  /** Serve the REST API listener. */
+  apiEnabled: boolean;
+  /** MCP bind address. Falls back to `host` when empty. */
+  mcpHost: string;
+  /** MCP port used by opencode and other MCP clients. */
+  mcpPort: number;
+  /** Serve the MCP listener. */
+  mcpEnabled: boolean;
   /** Bearer token for the REST and MCP endpoints. */
   token: string;
   shellEnabled: boolean;
@@ -27,6 +36,10 @@ export const DEFAULT_CONFIG: ComputerConfig = {
   workspace: "~/lm-chat-computer",
   host: "0.0.0.0",
   port: 1236,
+  apiEnabled: true,
+  mcpHost: "0.0.0.0",
+  mcpPort: 1237,
+  mcpEnabled: true,
   token: "",
   shellEnabled: true,
   approvalTimeoutSec: 120,
@@ -84,6 +97,47 @@ function clampInt(value: unknown, min: number, max: number, fallback: number): n
   return Math.max(min, Math.min(max, Math.trunc(parsed)));
 }
 
+function envString(name: string): string | undefined {
+  const value = process.env[name]?.trim();
+  return value ? value : undefined;
+}
+
+function envInt(name: string): number | undefined {
+  const value = envString(name);
+  if (value === undefined) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function envBool(name: string): boolean | undefined {
+  const value = envString(name)?.toLowerCase();
+  if (value === undefined) return undefined;
+  if (["1", "true", "yes", "on"].includes(value)) return true;
+  if (["0", "false", "no", "off"].includes(value)) return false;
+  return undefined;
+}
+
+/**
+ * Per-process overrides. Useful for running a second (DEV) instance with its
+ * own ports and home directory next to the installed plugin.
+ */
+export function configEnvOverrides(): Partial<ComputerConfig> {
+  const env: Partial<ComputerConfig> = {};
+  const host = envString("LM_COMPUTER_HOST");
+  if (host !== undefined) env.host = host;
+  const port = envInt("LM_COMPUTER_PORT");
+  if (port !== undefined) env.port = port;
+  const apiEnabled = envBool("LM_COMPUTER_API_ENABLED");
+  if (apiEnabled !== undefined) env.apiEnabled = apiEnabled;
+  const mcpHost = envString("LM_COMPUTER_MCP_HOST");
+  if (mcpHost !== undefined) env.mcpHost = mcpHost;
+  const mcpPort = envInt("LM_COMPUTER_MCP_PORT");
+  if (mcpPort !== undefined) env.mcpPort = mcpPort;
+  const mcpEnabled = envBool("LM_COMPUTER_MCP_ENABLED");
+  if (mcpEnabled !== undefined) env.mcpEnabled = mcpEnabled;
+  return env;
+}
+
 function normalizeConfig(
   input: Partial<ComputerConfig> | Record<string, unknown>,
   base: ComputerConfig,
@@ -97,6 +151,10 @@ function normalizeConfig(
     typeof raw.host === "string" && raw.host.trim().length > 0
       ? raw.host.trim()
       : base.host;
+  const mcpHost =
+    typeof raw.mcpHost === "string" && raw.mcpHost.trim().length > 0
+      ? raw.mcpHost.trim()
+      : host;
   const token =
     typeof raw.token === "string" && raw.token.trim().length > 0
       ? raw.token.trim()
@@ -105,6 +163,12 @@ function normalizeConfig(
     workspace,
     host,
     port: clampInt(raw.port, 1, 65535, base.port),
+    apiEnabled:
+      typeof raw.apiEnabled === "boolean" ? raw.apiEnabled : base.apiEnabled,
+    mcpHost,
+    mcpPort: clampInt(raw.mcpPort, 1, 65535, base.mcpPort),
+    mcpEnabled:
+      typeof raw.mcpEnabled === "boolean" ? raw.mcpEnabled : base.mcpEnabled,
     token,
     shellEnabled:
       typeof raw.shellEnabled === "boolean" ? raw.shellEnabled : base.shellEnabled,
@@ -151,13 +215,20 @@ export async function loadConfig(
     ...DEFAULT_CONFIG,
     workspace: path.resolve(expandHome(DEFAULT_CONFIG.workspace)),
   };
-  const merged = normalizeConfig({ ...stored, ...overrides }, base);
-  if (!merged.token) {
-    merged.token = crypto.randomBytes(32).toString("base64url");
+  // Per-process overrides (env) must not leak into config.json: a DEV instance
+  // started with LM_COMPUTER_PORT=1246 should not rewrite the installed profile.
+  const persisted = normalizeConfig({ ...stored, ...overrides }, base);
+  if (!persisted.token) {
+    persisted.token = crypto.randomBytes(32).toString("base64url");
   }
+  const merged = normalizeConfig(
+    { ...persisted, ...configEnvOverrides(), ...overrides },
+    base,
+  );
+  merged.token = persisted.token;
 
   await fs.mkdir(merged.workspace, { recursive: true });
-  await saveConfig(homeDir, merged);
+  await saveConfig(homeDir, persisted);
   await writeToken(homeDir, merged.token);
   return merged;
 }
@@ -197,6 +268,10 @@ export interface PublicConfig {
   workspace: string;
   host: string;
   port: number;
+  apiEnabled: boolean;
+  mcpHost: string;
+  mcpPort: number;
+  mcpEnabled: boolean;
   shellEnabled: boolean;
   approvalTimeoutSec: number;
   shellTimeoutSec: number;
@@ -212,6 +287,10 @@ export function publicConfig(homeDir: string, config: ComputerConfig): PublicCon
     workspace: config.workspace,
     host: config.host,
     port: config.port,
+    apiEnabled: config.apiEnabled,
+    mcpHost: config.mcpHost,
+    mcpPort: config.mcpPort,
+    mcpEnabled: config.mcpEnabled,
     shellEnabled: config.shellEnabled,
     approvalTimeoutSec: config.approvalTimeoutSec,
     shellTimeoutSec: config.shellTimeoutSec,

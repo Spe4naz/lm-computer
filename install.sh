@@ -79,8 +79,10 @@ fi
 
 if command -v ufw >/dev/null 2>&1 &&
   ufw status 2>/dev/null | grep -q "Status: active"; then
-  warn "ufw is active. Allow the plugin port from the LAN:"
-  warn "  sudo ufw allow 1236/tcp"
+  warn "ufw is active. Allow the plugin ports from the LAN:"
+  warn "  sudo ufw allow 1236/tcp   # REST API for LM Chat"
+  warn "  sudo ufw allow 1237/tcp   # MCP for opencode"
+  warn "Skip the MCP port if you do not use opencode."
 fi
 
 cat <<'EOF'
@@ -91,15 +93,18 @@ Paths:
   workspace:  ~/lm-chat-computer
   config:     ~/.config/lm-computer/config.json
   token:      ~/.config/lm-computer/token.txt   (created on first run)
-  REST/MCP:   http://<this-machine>:1236
+  REST API:   http://<this-machine>:1236/api
+  MCP:        http://<this-machine>:1237/mcp
 
 Notes:
   - Restart LM Studio if the plugin does not appear immediately.
-  - Stop the HTTP/MCP server with: ./stop.sh
+  - Stop both listeners with: ./stop.sh
   - Approvals currently use zenity on this machine. The LM Chat approval UI is
     not part of the current app build; the REST/MCP endpoints are ready for it.
-  - opencode can connect to /mcp with the token from token.txt.
-  - Never expose port 1236 to the internet.
+  - opencode connects to the MCP port (1237) with the token from token.txt.
+  - Do not add this MCP server to LM Studio: the plugin already provides native
+    tools there, and the MCP bridge can start before the plugin is loaded.
+  - Never expose ports 1236/1237 to the internet.
 
 To update later:
   git pull && ./install.sh
