@@ -1,0 +1,34 @@
+{
+  "name": "lm-computer-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LM Studio plugin that gives the model controlled access to the host computer.",
+  "homepage": "https://github.com/Spe4naz/lm-computer",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Spe4naz/lm-computer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Spe4naz/lm-computer/issues"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "lms dev",
+    "install-plugin": "lms dev --install",
+    "standalone": "node dist/standalone.js",
+    "test": "vitest run"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@lmstudio/sdk": "^2.1.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

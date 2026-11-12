@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.log
+.env
+
+# Runtime files created if LM_COMPUTER_HOME points inside the repository
+token.txt
+config.json
+audit.jsonl
+trash/
+*.zip

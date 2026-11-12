@@ -1,0 +1,11 @@
+{
+  "type": "plugin",
+  "runner": "node",
+  "owner": "lmchat",
+  "name": "lm-computer",
+  "revision": 1,
+  "sandbox": {
+    "enabled": false,
+    "reason": "Needs local file system, process execution and a LAN HTTP endpoint for the LM Chat approval console."
+  }
+}

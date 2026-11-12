@@ -1,0 +1,16 @@
+[extend]
+useDefault = true
+
+# Test fixtures deliberately contain fake credentials.
+[[allowlists]]
+description = "test fixtures"
+paths = [
+  '''test/.*''',
+]
+regexes = [
+  '''test-token''',
+  '''smoke-token''',
+  '''secret-token''',
+  '''api-secret''',
+  '''bridge-secret''',
+]
