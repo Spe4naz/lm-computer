@@ -4,36 +4,22 @@
 
 Даёт модели контролируемый доступ к компьютеру, на котором запущен LM Studio:
 файлы в отдельной рабочей папке, команды shell, открытие файлов и папок.
-Подтверждения сейчас показывает диалог `zenity` на машине с LM Studio. REST и
-MCP уже готовы для LM Chat и opencode; экран подтверждений в приложении
-появится позже.
+Подтверждения показывает диалог `zenity` на машине с LM Studio. REST и MCP
+готовы для LM Chat и opencode; экран подтверждений в приложении появится позже.
 
-Плагин также поднимает HTTP-сервер, поэтому тот же набор инструментов доступен
-приложению и opencode:
+Плагин поднимает HTTP-сервер, поэтому один и тот же набор инструментов доступен:
 
 - `native tools` — чат в LM Studio, со статусами и отменой;
-- `POST/GET /mcp` — MCP Streamable HTTP для opencode и других клиентов;
-- `/api/*` — REST для LM Chat и диагностики: файлы, журнал, подтверждения,
-  автопринятие.
-
-## Что уже реализовано
-
-- рабочая папка `~/lm-chat-computer` (настраивается);
-- `fs_list`, `fs_read`, `fs_write`, `fs_append`, `fs_mkdir`, `fs_move`,
-  `fs_delete` (в корзину), `fs_search`;
-- `shell_run` с таймаутом, лимитом вывода и убийством всей группы процессов;
-- `open_path` и `system_info`;
-- запрет выхода за рабочую папку, включая symlink и `..`;
-- очередь подтверждений с таймаутом;
-- временное автопринятие через API, максимум 30 минут;
-- fallback-диалог `zenity`, если приложение не подключено;
-- журнал действий `audit.jsonl`;
-- REST API и MCP endpoint;
-- одноразовый токен, который генерируется при первом запуске.
+- `/mcp` — MCP Streamable HTTP для opencode и других клиентов;
+- `/api/*` — REST для LM Chat и диагностики.
 
 ## Установка на Ubuntu
 
-LM Studio 0.4.28 уже содержит Node.js, отдельно ставить его не нужно.
+Требования:
+
+- Ubuntu (или другой Linux с LM Studio);
+- LM Studio 0.4.x с CLI `lms`;
+- Node.js ставить отдельно не нужно — LM Studio содержит его.
 
 ```bash
 git clone https://github.com/Spe4naz/lm-computer.git
@@ -41,14 +27,20 @@ cd lm-computer
 ./install.sh
 ```
 
-Если архив был скачан без executable-бита:
+Если архив скачан без executable-бита:
 
 ```bash
 bash install.sh
 ```
 
-Скрипт находит `lms`, выполняет `lms dev --install`, проверяет `zenity` и
-предупреждает, если `ufw` блокирует порт `1236`. Он не использует `sudo`.
+Скрипт:
+
+- находит `lms` в `PATH` или `~/.lmstudio/bin/lms`;
+- выполняет `lms dev --install`;
+- при ошибке пробует `npm ci` и повторяет установку;
+- проверяет `zenity`;
+- предупреждает, если `ufw` активен и порт `1236` может быть закрыт;
+- не использует `sudo`.
 
 Ручная установка без скрипта:
 
@@ -56,20 +48,102 @@ bash install.sh
 ~/.lmstudio/bin/lms dev --install
 ```
 
-После запуска плагин пишет в лог:
+После установки перезапустите LM Studio, если плагин не появился сразу.
+Первый запуск создаёт:
 
 ```text
-[lm-computer] REST/MCP listening on http://0.0.0.0:1236
-[lm-computer] workspace: /home/<user>/lm-chat-computer
-[lm-computer] token file: /home/<user>/.config/lm-computer/token.txt
+workspace: ~/lm-chat-computer
+config:    ~/.config/lm-computer/config.json
+token:     ~/.config/lm-computer/token.txt
+REST/MCP:  http://<this-machine>:1236
 ```
 
-Токен нужно один раз скопировать в настройки LM Chat. Если на машине включён
-`ufw`, открыть порт:
+`zenity` нужен для подтверждений, если приложение не подключено:
+
+```bash
+sudo apt install -y zenity
+```
+
+Если включён `ufw`, откройте порт для локальной сети:
 
 ```bash
 sudo ufw allow 1236/tcp
 ```
+
+Обновление плагина:
+
+```bash
+git pull
+./install.sh
+```
+
+## MCP-сервер
+
+Отдельный MCP-сервер ставить не нужно: он уже входит в плагин и доступен по
+адресу `http://<host>:1236/mcp`. Все запросы требуют токен из
+`~/.config/lm-computer/token.txt`.
+
+### opencode
+
+Добавьте сервер в глобальный или проектный `opencode.json(c)`:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "lm-computer": {
+        "type": "remote",
+        "url": "http://<ip-машины-с-lm-studio>:1236/mcp",
+        "headers": {
+          "Authorization": "Bearer <токен>"
+        }
+      }
+    }
+  }
+}
+```
+
+Проверка:
+
+```bash
+opencode mcp list
+```
+
+В списке должен появиться `lm-computer` со статусом `connected`.
+
+### LM Studio
+
+LM Studio 0.3.17+ умеет подключать MCP-серверы. Плагин уже даёт native tools,
+поэтому MCP в LM Studio нужен только если вы хотите использовать тот же сервер
+через `mcp.json` или другой клиент.
+
+Откройте **Program → Install → Edit mcp.json** и добавьте:
+
+```json
+{
+  "mcpServers": {
+    "lm-computer": {
+      "url": "http://127.0.0.1:1236/mcp",
+      "headers": {
+        "Authorization": "Bearer <токен>"
+      }
+    }
+  }
+}
+```
+
+В настройках сервера LM Studio включите **Allow calling servers from mcp.json**.
+После изменения `mcp.json` перезапустите LM Studio.
+
+Если LM Studio и плагин на одной машине, используйте `127.0.0.1`. Если клиент
+на другой машине — IP машины с LM Studio и токен.
+
+### LM Chat
+
+REST уже доступен по `http://<ip>:1236/api`, но экран подтверждений и файлов
+в текущей версии приложения ещё не подключён. Для подтверждений сейчас
+используется `zenity`.
 
 ## Настройки
 
@@ -91,7 +165,7 @@ sudo ufw allow 1236/tcp
 ```
 
 `host` и `port` меняются только с перезапуском плагина. Остальное можно менять
-из приложения через `PUT /api/config`.
+через `PUT /api/config`.
 
 ## REST
 
@@ -128,22 +202,28 @@ curl -H "Authorization: Bearer $TOKEN" \
 - `GET /api/audit?limit=100`;
 - `POST /api/cancel` — отменить команду и все ожидающие подтверждения.
 
-## MCP
+## Остановка
 
-```jsonc
-{
-  "mcp": {
-    "servers": {
-      "lm-computer": {
-        "type": "remote",
-        "url": "http://<ip>:1236/mcp",
-        "headers": {
-          "Authorization": "Bearer <token>"
-        }
-      }
-    }
-  }
-}
+Только скрипт:
+
+```bash
+./stop.sh
+```
+
+Если архив скачан без executable-бита:
+
+```bash
+bash stop.sh
+```
+
+Скрипт читает токен из `~/.config/lm-computer/token.txt`, останавливает
+HTTP/MCP-сервер и отменяет активные команды. Native tools в LM Studio
+продолжают работать до перезапуска LM Studio.
+
+Для другого адреса:
+
+```bash
+LM_COMPUTER_URL=http://192.168.1.50:1236 ./stop.sh
 ```
 
 ## Политика доступа
@@ -154,7 +234,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | Удаление и перемещение | подтверждение |
 | Файлы вне рабочей папки | запрещено |
 | Shell-команда | подтверждение |
-| Автопринятие | только временное, из приложения; действует, пока приложение на связи |
+| Автопринятие | только временное через API, максимум 30 минут; действует, пока клиент на связи |
 | Опасные команды (`sudo`, `mkfs`, `dd`, `shutdown`, `rm -rf /`) | блокируются всегда |
 
 ## Проверено локально
@@ -170,45 +250,21 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 Юнит-тесты: 13/13 (`npm test`).
 
-## Пакет для spike
+## Ограничения
 
-Готовый архив:
-
-```text
-tools/lm-computer-plugin/lm-computer-plugin-0.1.0.zip
-```
-
-На Ubuntu:
-
-```bash
-mkdir -p ~/lm-computer-plugin
-cd ~/lm-computer-plugin
-unzip lm-computer-plugin-0.1.0.zip
-~/.lmstudio/bin/lms dev
-```
-
-Если `zenity` не установлен:
-
-```bash
-sudo apt install -y zenity
-```
-
-## Ограничения spike-версии
-
-- нет UI настроек внутри LM Studio — настройки в JSON и приложении;
-- приложение LM Chat ещё не подключено к `/api`;
+- нет UI настроек внутри LM Studio — настройки в JSON и API;
+- экран подтверждений в LM Chat ещё не подключён, используется `zenity`;
 - MCP-сервер stateless: без сессий и server-initiated notifications;
 - `zenity` должен быть установлен на Ubuntu;
 - автопринятие живёт только в памяти плагина и сбрасывается при перезапуске.
 
 ## Проверка на Ubuntu
 
-1. `lms dev` загружает плагин без ошибок.
+1. `./install.sh` завершается без ошибок.
 2. В чате LM Studio с Qwen 3.5 9B: «создай файл `test.txt` со словом hello» —
    файл появляется в `~/lm-chat-computer`.
-3. «выполни `whoami`» — в LM Chat появляется подтверждение; после разрешения
-   вывод приходит в чат.
-4. Закрыть LM Chat, повторить команду — появляется `zenity`.
-5. Включить автопринятие на 1 минуту — команда выполняется без диалога.
-6. `curl http://<ip>:1236/api/status` с токеном отвечает.
-7. `opencode mcp list` показывает `lm-computer` подключённым.
+3. «выполни `whoami`» — появляется `zenity`; после разрешения вывод приходит
+   в чат.
+4. `curl http://127.0.0.1:1236/api/status` с токеном отвечает.
+5. `opencode mcp list` показывает `lm-computer` подключённым.
+6. `./stop.sh` останавливает HTTP/MCP.

@@ -95,6 +95,7 @@ Paths:
 
 Notes:
   - Restart LM Studio if the plugin does not appear immediately.
+  - Stop the HTTP/MCP server with: ./stop.sh
   - Approvals currently use zenity on this machine. The LM Chat approval UI is
     not part of the current app build; the REST/MCP endpoints are ready for it.
   - opencode can connect to /mcp with the token from token.txt.

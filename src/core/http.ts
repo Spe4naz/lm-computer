@@ -41,7 +41,12 @@ export class HttpApi {
     const server = this.server;
     if (!server) return;
     this.server = undefined;
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    const closed = new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+    // Long-poll /api/events and open MCP streams must not keep the process up.
+    server.closeAllConnections();
+    await closed;
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -103,6 +108,15 @@ export class HttpApi {
 
     if (method === "GET" && pathname === "/api/status") {
       this.sendJson(res, 200, this.service.status());
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/shutdown") {
+      this.sendJson(res, 200, { ok: true, message: "shutting down" });
+      this.service.cancelAll();
+      setTimeout(() => {
+        void this.service.stopHttp();
+      }, 50);
       return;
     }
 
