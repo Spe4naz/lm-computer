@@ -7,13 +7,33 @@
 Подтверждения показывает диалог `zenity` на машине с LM Studio. REST и MCP
 готовы для LM Chat и opencode; экран подтверждений в приложении появится позже.
 
-Плагин поднимает два независимых HTTP-listener'а:
+## Как это устроено
 
-- `native tools` — чат в LM Studio, со статусами и отменой;
-- `/api/*` на порту `1236` — REST для LM Chat и диагностики;
-- `/mcp` на порту `1237` — MCP Streamable HTTP для opencode.
+```text
+LM Studio
+  └─ plugin lmchat/lm-computer
+       └─ native tools в чате LM Studio
 
-Если один порт занят или listener упал, второй продолжает работать.
+lm-computer.service (systemd --user)
+  └─ node dist/standalone.js
+       ├─ REST API  http://<host>:1236/api
+       └─ MCP       http://<host>:1237/mcp
+```
+
+HTTP специально вынесен из плагина в отдельный процесс. LM Studio выгружает
+плагины, когда они не нужны, и делает это сразу после регистрации инструментов:
+
+```text
+[InternalPluginsProvider] Evicting plugin lmchat/lm-computer.
+[InternalPluginsProvider][PluginInstance] Force exiting plugin process.
+```
+
+Вместе с процессом плагина исчезали бы и порты `1236`/`1237`. Поэтому:
+
+- плагин отвечает только за native tools внутри LM Studio;
+- REST и MCP живут в `lm-computer.service` и не зависят от LM Studio;
+- у сервиса и native tools разные очереди подтверждений, но обе используют
+  `zenity`, пока в LM Chat нет экрана подтверждений.
 
 ## Установка на Ubuntu
 
@@ -21,7 +41,7 @@
 
 - Ubuntu (или другой Linux с LM Studio);
 - LM Studio 0.4.x с CLI `lms`;
-- Node.js ставить отдельно не нужно — LM Studio содержит его.
+- Node.js в `PATH` — нужен для `lm-computer.service` и сборки.
 
 ```bash
 git clone https://github.com/Spe4naz/lm-computer.git
@@ -40,6 +60,7 @@ bash install.sh
 - находит `lms` в `PATH` или `~/.lmstudio/bin/lms`;
 - ставит npm-зависимости (`npm ci`) и собирает `dist/`;
 - выполняет `lms dev --install`;
+- создаёт `~/.config/systemd/user/lm-computer.service` и запускает его;
 - проверяет `zenity`;
 - предупреждает, если `ufw` активен и порты `1236`/`1237` могут быть закрыты;
 - не использует `sudo`.
@@ -47,7 +68,10 @@ bash install.sh
 Ручная установка без скрипта:
 
 ```bash
+npm ci
+npm run build
 ~/.lmstudio/bin/lms dev --install
+node dist/standalone.js
 ```
 
 После установки перезапустите LM Studio, если плагин не появился сразу.
@@ -61,7 +85,7 @@ REST API:  http://<this-machine>:1236/api
 MCP:       http://<this-machine>:1237/mcp
 ```
 
-`zenity` нужен для подтверждений, если приложение не подключено:
+`zenity` нужен для подтверждений:
 
 ```bash
 sudo apt install -y zenity
@@ -76,11 +100,35 @@ sudo ufw allow 1237/tcp   # MCP для opencode
 
 Порт `1237` можно не открывать, если opencode не используется.
 
-Обновление плагина:
+Обновление:
 
 ```bash
 git pull
 ./install.sh
+```
+
+## Управление сервисом
+
+```bash
+systemctl --user status lm-computer.service
+systemctl --user restart lm-computer.service
+journalctl --user -u lm-computer.service -f
+```
+
+Из репозитория:
+
+```bash
+./start.sh
+./stop.sh
+```
+
+`stop.sh` сначала останавливает процесс через API, а если он недоступен —
+через `systemctl --user stop`.
+
+Если сервис должен работать без входа в графическую сессию:
+
+```bash
+sudo loginctl enable-linger "$USER"
 ```
 
 ## Порты
@@ -91,31 +139,23 @@ git pull
 | MCP | `1237` | opencode и другие MCP-клиенты, `/mcp` |
 | DEV-экземпляр | `1246` / `1247` | опционально, при разработке |
 
-В логе плагина видно состояние каждого listener'а:
+Лог сервиса:
 
 ```text
 [lm-computer] REST API listening on http://0.0.0.0:1236
 [lm-computer] MCP listening on http://0.0.0.0:1237/mcp
 ```
 
-Если порт занят:
-
-```text
-[lm-computer] MCP failed on http://0.0.0.0:1237/mcp: listen EADDRINUSE ...
-```
-
-REST при этом продолжает работать. Состояние также видно в
-`GET /api/status` → `listeners.api` и `listeners.mcp`.
+Если порт занят, listener помечается как `listening: false`, а второй
+продолжает работать. Состояние видно в `GET /api/status` → `listeners.api` и
+`listeners.mcp`.
 
 ## MCP-сервер
 
-Отдельный MCP-сервер ставить не нужно: он уже входит в плагин и доступен по
-адресу `http://<host>:1237/mcp`. Все запросы требуют токен из
-`~/.config/lm-computer/token.txt`.
+MCP уже входит в сервис и доступен по адресу `http://<host>:1237/mcp`.
+Все запросы требуют токен из `~/.config/lm-computer/token.txt`.
 
 ### opencode
-
-Добавьте сервер в глобальный или проектный `opencode.json(c)`:
 
 ```jsonc
 {
@@ -142,22 +182,17 @@ opencode mcp list
 
 В списке должен появиться `lm-computer` со статусом `connected`.
 
-Если opencode запущен на той же машине, что и плагин, используйте
-`http://127.0.0.1:1237/mcp`.
+Если opencode на той же машине, используйте `http://127.0.0.1:1237/mcp`.
 
 ### LM Studio
 
 **MCP в LM Studio добавлять не нужно.** Плагин уже даёт native tools, а
-`mcp/lm-computer` в `mcp.json` создаёт отдельный мост, который подключается к
-порту раньше, чем плагин успевает загрузиться. Отсюда ошибки вида:
-
-```text
-connect ECONNREFUSED 127.0.0.1:1236
-```
+`mcp/lm-computer` в `mcp.json` создаёт второй слой, который к тому же
+подключается к порту до того, как сервис успевает стартовать.
 
 Уберите `lm-computer` из **Program → Install → Edit mcp.json** и перезапустите
-LM Studio. В LM Studio должен остаться только один плагин: установленный
-`lmchat/lm-computer`, без `DEV` и без MCP-моста.
+LM Studio. В Integrations должен остаться только установленный
+`lmchat/lm-computer`.
 
 ### LM Chat
 
@@ -194,7 +229,13 @@ REST доступен по `http://<ip>:1236/api`, но экран подтве�
 - `apiEnabled` / `mcpEnabled` — можно оставить только один listener.
 
 Порты, адреса и `apiEnabled`/`mcpEnabled` меняются только с перезапуском
-плагина. Остальное можно менять через `PUT /api/config`.
+сервиса:
+
+```bash
+systemctl --user restart lm-computer.service
+```
+
+Остальное можно менять через `PUT /api/config`.
 
 ## Параллельный запуск
 
@@ -203,18 +244,15 @@ REST доступен по `http://<ip>:1236/api`, но экран подтве�
 Это два независимых listener'а в одном процессе. Они работают параллельно,
 но у них общая очередь подтверждений, автопринятие и журнал.
 
-### Установленный плагин и DEV
+### Второй экземпляр
 
-Два экземпляра одновременно возможны, но только с разными портами **и** разным
-конфигом. Иначе оба попытаются занять `1236`/`1237`.
-
-Для DEV-экземпляра:
+Для DEV-профиля нужен отдельный конфиг и отдельные порты:
 
 ```bash
 LM_COMPUTER_HOME=~/.config/lm-computer-dev \
 LM_COMPUTER_PORT=1246 \
 LM_COMPUTER_MCP_PORT=1247 \
-~/.lmstudio/bin/lms dev
+node dist/standalone.js
 ```
 
 Переменные окружения:
@@ -228,43 +266,24 @@ LM_COMPUTER_MCP_PORT=1247 \
 | `LM_COMPUTER_MCP_HOST` | адрес MCP |
 | `LM_COMPUTER_MCP_PORT` | порт MCP |
 | `LM_COMPUTER_MCP_ENABLED` | `true`/`false` |
+| `LM_COMPUTER_PLUGIN_HTTP` | `1` — включить HTTP внутри плагина для отладки |
 
 Приоритет: аргументы кода → переменные окружения → `config.json` → значения по
-умолчанию.
+умолчанию. Env-значения не записываются в `config.json`.
 
-Важно: у двух экземпляров **разные** очереди подтверждений и разные окна
-автопринятия. Для обычной работы оставляйте один экземпляр.
+### HTTP внутри плагина
 
-Проверить, что `lms dev` передал переменные плагину, можно по строке в логе:
-
-```text
-[lm-computer] REST API listening on http://0.0.0.0:1246
-[lm-computer] MCP listening on http://0.0.0.0:1247/mcp
-```
-
-### Постоянный MCP без LM Studio
-
-В репозитории есть `standalone.js` — тот же сервер без LM Studio:
+По умолчанию плагин HTTP не поднимает. Для отладки можно включить:
 
 ```bash
-npm run build
-node dist/standalone.js
+LM_COMPUTER_PLUGIN_HTTP=1 ~/.lmstudio/bin/lms dev
 ```
 
-Профиль «только MCP»:
+Но тогда сначала остановите сервис, иначе порты будут заняты:
 
-```json
-{
-  "apiEnabled": false,
-  "mcpEnabled": true,
-  "mcpPort": 1237
-}
+```bash
+systemctl --user stop lm-computer.service
 ```
-
-Такой процесс можно запускать через systemd, но у него будет **своя** очередь
-подтверждений: автопринятие из LM Chat на него не подействует, а `zenity`
-из user-сервиса может не иметь доступа к дисплею. Этот режим пока не входит в
-`install.sh`; используйте его, только если понимаете ограничения.
 
 ## REST
 
@@ -304,30 +323,6 @@ curl -H "Authorization: Bearer $TOKEN" \
 `/api/health` и `/api/shutdown` также отвечают на MCP-порту, чтобы `stop.sh`
 работал при выключенном REST.
 
-## Остановка
-
-Только скрипт:
-
-```bash
-./stop.sh
-```
-
-Если архив скачан без executable-бита:
-
-```bash
-bash stop.sh
-```
-
-Скрипт читает `config.json`, определяет порт REST, при необходимости пробует
-MCP-порт, останавливает оба listener'а и отменяет активные команды. Native tools
-в LM Studio продолжают работать до перезапуска LM Studio.
-
-Для другого адреса:
-
-```bash
-LM_COMPUTER_URL=http://192.168.1.50:1236 ./stop.sh
-```
-
 ## Политика доступа
 
 | Действие | По умолчанию |
@@ -351,6 +346,9 @@ LM_COMPUTER_URL=http://192.168.1.50:1236 ./stop.sh
 - записи в `audit.jsonl`;
 - два listener'а на разных портах и отказ одного без остановки второго.
 
+На Ubuntu 26.04 проверены standalone-сервис на `1236`/`1237`, REST
+`/api/status` и MCP `initialize`.
+
 Юнит-тесты: 30/30 (`npm test`).
 
 ## Ограничения
@@ -359,17 +357,21 @@ LM_COMPUTER_URL=http://192.168.1.50:1236 ./stop.sh
 - экран подтверждений в LM Chat ещё не подключён, используется `zenity`;
 - MCP-сервер stateless: без сессий и server-initiated notifications;
 - `zenity` должен быть установлен на Ubuntu;
-- автопринятие живёт только в памяти плагина и сбрасывается при перезапуске;
-- у установленного и DEV-экземпляра разные очереди подтверждений.
+- автопринятие живёт только в памяти сервиса и сбрасывается при перезапуске;
+- у сервиса и native tools в LM Studio разные очереди подтверждений;
+- `zenity` из systemd-сервиса требует `DISPLAY`/`WAYLAND_DISPLAY`; они
+  передаются через `PassEnvironment` из сессии пользователя.
 
 ## Проверка на Ubuntu
 
 1. `./install.sh` завершается без ошибок.
-2. В чате LM Studio с Qwen 3.5 9B: «создай файл `test.txt` со словом hello» —
-   файл появляется в `~/lm-chat-computer`.
-3. «выполни `whoami`» — появляется `zenity`; после разрешения вывод приходит
-   в чат.
+2. `systemctl --user status lm-computer.service` — `active (running)`.
+3. `ss -ltnp | grep -E '1236|1237'` — два listener'а.
 4. `curl http://127.0.0.1:1236/api/status` с токеном отвечает и показывает оба
    listener'а.
-5. `opencode mcp list` показывает `lm-computer` подключённым к `1237`.
-6. `./stop.sh` останавливает оба listener'а.
+5. В чате LM Studio с Qwen 3.5 9B: «создай файл `test.txt` со словом hello» —
+   файл появляется в `~/lm-chat-computer`.
+6. «выполни `whoami`» — появляется `zenity`; после разрешения вывод приходит
+   в чат.
+7. `opencode mcp list` показывает `lm-computer` подключённым к `1237`.
+8. `./stop.sh` останавливает сервис.

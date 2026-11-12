@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Installs the lm-computer plugin into LM Studio on Linux.
+# Installs the lm-computer plugin into LM Studio and starts the REST/MCP
+# systemd user service.
 # Run from the repository root:
 #   ./install.sh
 # or:
@@ -27,7 +28,8 @@ usage() {
   cat <<'EOF'
 Usage: ./install.sh
 
-Installs lm-computer into LM Studio for the current user.
+Installs lm-computer into LM Studio for the current user and starts the
+lm-computer systemd user service (REST + MCP).
 
 Environment:
   LMS_BIN   path to the lms CLI (default: lms from PATH or ~/.lmstudio/bin/lms)
@@ -81,6 +83,48 @@ fi
 say "Installing lm-computer into LM Studio..."
 "$LMS_BIN" dev --install
 
+say "Installing the REST/MCP user service..."
+NODE_BIN="$(command -v node || true)"
+if [[ -z "$NODE_BIN" ]]; then
+  warn "node was not found in PATH; skipping the systemd service."
+  warn "Run it manually with: node \"$SCRIPT_DIR/dist/standalone.js\""
+elif ! command -v systemctl >/dev/null 2>&1; then
+  warn "systemctl not found; skipping the user service."
+  warn "Run it manually with: node \"$SCRIPT_DIR/dist/standalone.js\""
+else
+  UNIT_DIR="$HOME/.config/systemd/user"
+  UNIT_FILE="$UNIT_DIR/lm-computer.service"
+  mkdir -p "$UNIT_DIR"
+  cat >"$UNIT_FILE" <<EOF
+[Unit]
+Description=LM Computer REST and MCP service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=$SCRIPT_DIR
+ExecStart="$NODE_BIN" "$SCRIPT_DIR/dist/standalone.js"
+Environment=LM_COMPUTER_HOME=$HOME/.config/lm-computer
+PassEnvironment=DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+EOF
+
+  if systemctl --user daemon-reload 2>/dev/null; then
+    systemctl --user enable lm-computer.service >/dev/null 2>&1 || true
+    if ! systemctl --user restart lm-computer.service; then
+      warn "Could not start lm-computer.service."
+      warn "Check: systemctl --user status lm-computer.service"
+    fi
+  else
+    warn "The systemd user manager is unavailable."
+    warn "Start manually with: node \"$SCRIPT_DIR/dist/standalone.js\""
+  fi
+fi
+
 if ! command -v zenity >/dev/null 2>&1; then
   warn "zenity is missing. Approval dialogs on this machine need it:"
   warn "  sudo apt install -y zenity"
@@ -105,14 +149,22 @@ Paths:
   REST API:   http://<this-machine>:1236/api
   MCP:        http://<this-machine>:1237/mcp
 
+Service:
+  systemctl --user status lm-computer.service
+  systemctl --user restart lm-computer.service
+  ./start.sh
+  ./stop.sh
+
 Notes:
+  - The plugin inside LM Studio provides native tools only. REST/MCP run in the
+    lm-computer.service process, because LM Studio evicts plugin processes and
+    their HTTP listeners would disappear.
   - Restart LM Studio if the plugin does not appear immediately.
-  - Stop both listeners with: ./stop.sh
   - Approvals currently use zenity on this machine. The LM Chat approval UI is
     not part of the current app build; the REST/MCP endpoints are ready for it.
   - opencode connects to the MCP port (1237) with the token from token.txt.
   - Do not add this MCP server to LM Studio: the plugin already provides native
-    tools there, and the MCP bridge can start before the plugin is loaded.
+    tools there.
   - Never expose ports 1236/1237 to the internet.
 
 To update later:

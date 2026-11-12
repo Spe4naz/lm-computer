@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Stops the lm-computer HTTP listeners (REST and MCP).
+# Stops the lm-computer REST/MCP service and its HTTP listeners.
 # Run from the repository root:
 #   ./stop.sh
 # or:
 #   bash stop.sh
 #
-# Both listeners live in one process, so stopping one stops the other.
-# Native LM Studio tools remain available until LM Studio is restarted.
+# REST and MCP live in one process, so stopping one stops the other.
+# Native LM Studio tools are not affected.
 
 set -euo pipefail
 
@@ -18,9 +18,10 @@ usage() {
   cat <<'EOF'
 Usage: ./stop.sh
 
-Stops the plugin's REST and MCP listeners using the bearer token.
-The REST port is read from ~/.config/lm-computer/config.json; if the REST
-listener is disabled, the script tries the MCP port instead.
+Stops the REST/MCP process using the bearer token. The REST port is read from
+~/.config/lm-computer/config.json; if the REST listener is disabled, the script
+tries the MCP port instead. If both are unreachable, it stops
+lm-computer.service through systemd.
 
 Environment:
   LM_COMPUTER_URL    explicit base URL, skips config discovery
@@ -177,6 +178,14 @@ if [[ "$auth_failed" == "1" ]]; then
 fi
 if [[ "$stop_failed" == "1" ]]; then
   exit 1
+fi
+
+UNIT_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/lm-computer.service"
+if [[ -f "$UNIT_FILE" ]] && command -v systemctl >/dev/null 2>&1; then
+  if systemctl --user stop lm-computer.service 2>/dev/null; then
+    printf 'lm-computer.service stopped.\n'
+    exit 0
+  fi
 fi
 
 printf 'Server is already stopped or unreachable.\n'
