@@ -159,8 +159,8 @@ for base in "${urls[@]}"; do
   code="${response##*$'\n'}"
   body="${response%$'\n'*}"
   if [[ "$code" == "200" ]]; then
-    printf 'HTTP/MCP server stopped.\n'
-    printf 'Native LM Studio tools remain until LM Studio is restarted.\n'
+    printf 'HTTP/MCP service stopped.\n'
+    printf 'Native LM Studio tools are not affected.\n'
     exit 0
   fi
   if [[ "$code" == "401" ]]; then
