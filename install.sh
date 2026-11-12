@@ -61,16 +61,25 @@ fi
 say "LM Studio CLI: $LMS_BIN"
 "$LMS_BIN" --version || warn "Could not read the lms version."
 
-say "Installing lm-computer into LM Studio..."
-if ! "$LMS_BIN" dev --install; then
-  if command -v npm >/dev/null 2>&1; then
-    warn "Install failed; retrying after npm ci..."
+if command -v npm >/dev/null 2>&1; then
+  say "Installing npm dependencies..."
+  if [[ -f package-lock.json ]]; then
     npm ci
-    "$LMS_BIN" dev --install
   else
-    die "Install failed and npm is not available. Install Node.js/npm and retry."
+    npm install
   fi
+  say "Building the plugin..."
+  npm run build
+else
+  [[ -f dist/index.js ]] ||
+    die "dist/index.js is missing and npm is not available. Install Node.js/npm and retry."
+  warn "npm was not found; using the existing dist/ build."
 fi
+
+[[ -f dist/index.js ]] || die "Build failed: dist/index.js is missing."
+
+say "Installing lm-computer into LM Studio..."
+"$LMS_BIN" dev --install
 
 if ! command -v zenity >/dev/null 2>&1; then
   warn "zenity is missing. Approval dialogs on this machine need it:"
