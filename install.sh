@@ -114,8 +114,10 @@ PrivateTmp=yes
 ProtectSystem=full
 ProtectControlGroups=yes
 ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectClock=yes
+# ProtectKernelModules and ProtectClock are deliberately absent: both imply
+# capability-dropping, which a systemd --user service cannot perform. With them
+# the unit fails with "Failed to drop capabilities: Operation not permitted"
+# (status=218/CAPABILITIES) and restart-loops forever.
 RestrictSUIDSGID=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 

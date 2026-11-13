@@ -171,6 +171,28 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - системный промт не запрещает инструменты;
 - посмотрите `GET /api/tools` у сервиса и список tools в настройках чата.
 
+## Сервис падает с `Failed to drop capabilities`
+
+Симптом: `systemctl --user status lm-computer.service` показывает
+`activating (auto-restart)`, в журнале — `Failed at step CAPABILITIES spawning`
+и `status=218/CAPABILITIES`, счётчик рестартов растёт.
+
+Причина: в юните заданы `ProtectKernelModules=yes` и/или `ProtectClock=yes`.
+Эти опции требуют сброса capabilities, а пользовательский менеджер systemd
+(`systemd --user`) на это не имеет прав.
+
+Решение: удалить обе строки из `~/.config/systemd/user/lm-computer.service`,
+затем:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user reset-failed lm-computer.service
+systemctl --user restart lm-computer.service
+```
+
+`install.sh` из текущей версии уже создаёт юнит без этих опций.
+
+
 ## Диагностика одним блоком
 
 ```bash
