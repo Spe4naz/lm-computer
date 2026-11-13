@@ -1,0 +1,10 @@
+# OSV-Scanner configuration.
+#
+# zod 3 is pinned by @lmstudio/sdk 2.1.0. The advisory is a memory-exhaustion
+# issue for oversized constrained collections; request bodies and tool
+# arguments are size-limited in this service. Remove this entry when the SDK
+# supports zod 4 and the dependency can be upgraded.
+[[IgnoredVulns]]
+id = "GHSA-mrhx-c7xc-m3w5"
+ignoreUntil = 2027-01-31
+reason = "zod 3 is pinned by @lmstudio/sdk 2.1.0; mitigated by request size limits"
