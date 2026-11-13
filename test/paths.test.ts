@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { PathGuard, PathOutsideWorkspaceError } from "../src/core/paths";
+import { FileTools } from "../src/core/files";
 
 let root: string;
 let outside: string;
@@ -62,5 +63,38 @@ describe("PathGuard", () => {
     await expect(guard.resolve("escape-link/secret.txt")).rejects.toBeInstanceOf(
       PathOutsideWorkspaceError,
     );
+  });
+
+  it("rejects a dangling symlink file", async () => {
+    const link = path.join(root, "dangling-file");
+    try {
+      await symlink(path.join(outside, "missing.txt"), link, "file");
+    } catch {
+      return; // Windows without symlink privileges.
+    }
+    await expect(guard.resolve("dangling-file")).rejects.toBeInstanceOf(
+      PathOutsideWorkspaceError,
+    );
+    const files = new FileTools(guard);
+    await expect(
+      files.write("dangling-file", "escape", "append"),
+    ).rejects.toBeInstanceOf(PathOutsideWorkspaceError);
+  });
+
+  it("rejects a write through a dangling symlinked directory", async () => {
+    const link = path.join(root, "dangling-dir");
+    try {
+      await symlink(
+        path.join(outside, "missing-dir"),
+        link,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+    } catch {
+      return; // Windows without symlink privileges.
+    }
+    const files = new FileTools(guard);
+    await expect(
+      files.write("dangling-dir/file.txt", "escape", "overwrite"),
+    ).rejects.toBeInstanceOf(PathOutsideWorkspaceError);
   });
 });

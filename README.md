@@ -371,7 +371,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 На Ubuntu 26.04 проверены standalone-сервис на `1236`/`1237`, REST
 `/api/status` и MCP `initialize`.
 
-Юнит-тесты: 32/32 (`npm test`).
+Юнит-тесты: 34/34 (`npm test`).
 
 ## Ограничения
 

@@ -1,4 +1,4 @@
-import { promises as fs } from "node:fs";
+import { constants, promises as fs } from "node:fs";
 import path from "node:path";
 import { PathGuard } from "./paths";
 
@@ -121,7 +121,25 @@ export class FileTools {
 
     if (mode === "append") {
       const existed = await exists(absolute);
-      await fs.appendFile(absolute, buffer, { mode: 0o644 });
+      if (process.platform !== "win32") {
+        // O_NOFOLLOW closes the race between PathGuard.resolve() and a symlink
+        // created at the final component.
+        const handle = await fs.open(
+          absolute,
+          constants.O_WRONLY |
+            constants.O_CREAT |
+            constants.O_APPEND |
+            constants.O_NOFOLLOW,
+          0o644,
+        );
+        try {
+          await handle.writeFile(buffer);
+        } finally {
+          await handle.close();
+        }
+      } else {
+        await fs.appendFile(absolute, buffer, { mode: 0o644 });
+      }
       return { path: this.guard.relative(absolute), bytes: buffer.length, created: !existed };
     }
 

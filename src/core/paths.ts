@@ -76,7 +76,9 @@ async function realpathNearest(input: string): Promise<string> {
   for (;;) {
     try {
       const real = await fs.realpath(current);
-      return tail.length === 0 ? real : path.join(real, ...tail.reverse());
+      const parts = tail.slice().reverse();
+      if (parts.length > 0) await rejectSymlinkTail(real, parts);
+      return parts.length === 0 ? real : path.join(real, ...parts);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
@@ -84,6 +86,31 @@ async function realpathNearest(input: string): Promise<string> {
       if (parent === current) throw error;
       tail.push(path.basename(current));
       current = parent;
+    }
+  }
+}
+
+/**
+ * The deepest existing ancestor was resolved by realpath, so the remaining
+ * components do not exist yet. A dangling symlink is still an existing entry:
+ * following it during append/write would escape the workspace.
+ */
+async function rejectSymlinkTail(anchor: string, parts: string[]): Promise<void> {
+  let current = anchor;
+  for (const part of parts) {
+    current = path.join(current, part);
+    try {
+      const stat = await fs.lstat(current);
+      if (stat.isSymbolicLink()) {
+        throw new PathOutsideWorkspaceError(
+          `Path goes through a dangling symlink: ${current}`,
+        );
+      }
+    } catch (error) {
+      if (error instanceof PathOutsideWorkspaceError) throw error;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") continue;
+      throw error;
     }
   }
 }
