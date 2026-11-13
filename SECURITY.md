@@ -56,6 +56,14 @@ machine.
 - The generated systemd unit uses `NoNewPrivileges`, `PrivateTmp`,
   `ProtectSystem=full` and related kernel protections.
 
+## CI checks
+
+Every push runs gitleaks, CodeQL (JavaScript/TypeScript), an OSV dependency scan
+and a CycloneDX SBOM job. Pull requests also run dependency review with a
+high-severity threshold. The known zod advisory is temporarily ignored in
+`osv-scanner.toml` until `@lmstudio/sdk` supports zod 4; request size limits
+reduce its impact.
+
 ## Dependencies
 
 Run `npm audit` and keep `@lmstudio/sdk`, `@modelcontextprotocol/sdk` and `zod`
