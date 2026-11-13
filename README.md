@@ -7,6 +7,36 @@
 Подтверждения показывает диалог `zenity` на машине с LM Studio. REST и MCP
 готовы для LM Chat и opencode; экран подтверждений в приложении появится позже.
 
+## Документация
+
+Инструкции и ответы на частые вопросы — в
+[вики](https://github.com/Spe4naz/lm-computer/wiki):
+
+- [Установка](https://github.com/Spe4naz/lm-computer/wiki/Installation)
+- [Как обновить плагин](https://github.com/Spe4naz/lm-computer/wiki/Updating)
+- [Настройки](https://github.com/Spe4naz/lm-computer/wiki/Configuration)
+- [Инструменты модели](https://github.com/Spe4naz/lm-computer/wiki/Tools)
+- [REST API](https://github.com/Spe4naz/lm-computer/wiki/REST-API)
+- [MCP и opencode](https://github.com/Spe4naz/lm-computer/wiki/MCP)
+- [Подтверждения](https://github.com/Spe4naz/lm-computer/wiki/Approvals)
+- [Безопасность](https://github.com/Spe4naz/lm-computer/wiki/Security)
+- [Устранение неполадок](https://github.com/Spe4naz/lm-computer/wiki/Troubleshooting)
+- [Частые вопросы](https://github.com/Spe4naz/lm-computer/wiki/FAQ)
+
+Исходники страниц лежат в каталоге [`wiki/`](wiki). Чтобы опубликовать правки:
+
+```bash
+git clone https://github.com/Spe4naz/lm-computer.wiki.git /tmp/lm-computer-wiki
+cp wiki/*.md /tmp/lm-computer-wiki/
+git -C /tmp/lm-computer-wiki add -A
+git -C /tmp/lm-computer-wiki commit -m "Update wiki"
+git -C /tmp/lm-computer-wiki push
+```
+
+GitHub создаёт вики-репозиторий только после первой страницы, созданной в
+браузере: откройте `https://github.com/Spe4naz/lm-computer/wiki` и нажмите
+«Create the first page», если клонирование отвечает «Repository not found».
+
 ## Как это устроено
 
 ```text
