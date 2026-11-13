@@ -248,7 +248,11 @@ REST доступен по `http://<ip>:1236/api`, но экран подтве�
 - `port` — REST API для LM Chat;
 - `mcpPort` — MCP для opencode; должен отличаться от `port`;
 - `mcpHost` — адрес MCP; если не задан, наследует `host`;
-- `apiEnabled` / `mcpEnabled` — можно оставить только один listener.
+- `apiEnabled` / `mcpEnabled` — можно оставить только один listener;
+- `workspace` — только внутри домашнего каталога пользователя. Другой корень
+  разрешается явно через `LM_COMPUTER_ALLOWED_ROOTS` (разделитель —
+  `path.delimiter`: `:` на Linux, `;` на Windows). Корень файловой системы
+  запрещён всегда.
 
 Порты, адреса и `apiEnabled`/`mcpEnabled` меняются только с перезапуском
 сервиса:
@@ -288,6 +292,8 @@ node dist/standalone.js
 | `LM_COMPUTER_MCP_HOST` | адрес MCP |
 | `LM_COMPUTER_MCP_PORT` | порт MCP |
 | `LM_COMPUTER_MCP_ENABLED` | `true`/`false` |
+| `LM_COMPUTER_ALLOWED_ROOTS` | дополнительные корни workspace через `path.delimiter` |
+| `LM_COMPUTER_CORS_ORIGINS` | список Origin через запятую для браузерного клиента; по умолчанию CORS выключен |
 | `LM_COMPUTER_PLUGIN_HTTP` | `1` — включить HTTP внутри плагина для отладки |
 
 Приоритет: аргументы кода → переменные окружения → `config.json` → значения по
@@ -355,6 +361,14 @@ curl -H "Authorization: Bearer $TOKEN" \
 | Shell-команда | подтверждение |
 | Автопринятие | только временное через API, максимум 30 минут; действует, пока клиент на связи |
 | Опасные команды (`sudo`, `mkfs`, `dd`, `shutdown`, `rm -rf /`) | блокируются всегда |
+| Окружение `shell_run` | только безопасный allowlist (`PATH`, `HOME`, `LANG`, `TERM`, `TMPDIR`, …) |
+| Журнал | секреты в командах и аргументах маскируются, файл ротируется после 5 МБ |
+| CORS | выключен; включается только списком в `LM_COMPUTER_CORS_ORIGINS` |
+
+Denylist — защита от случайных разрушительных команд, **не sandbox**. После
+подтверждения `shell_run` работает с правами пользователя и может читать токен,
+`~/.ssh` и обходить workspace. Не включайте автопринятие, если не доверяете
+модели.
 
 ## Проверено локально
 
@@ -371,7 +385,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 На Ubuntu 26.04 проверены standalone-сервис на `1236`/`1237`, REST
 `/api/status` и MCP `initialize`.
 
-Юнит-тесты: 34/34 (`npm test`).
+Юнит-тесты: 43/43 (`npm test`).
 
 ## Ограничения
 

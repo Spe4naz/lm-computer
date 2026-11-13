@@ -19,7 +19,7 @@ async function main(): Promise<void> {
   console.log("Press Ctrl+C to stop.");
 
   const shutdown = async (): Promise<void> => {
-    await service.stopHttp();
+    await service.shutdown();
     process.exit(0);
   };
   process.on("SIGINT", () => void shutdown());

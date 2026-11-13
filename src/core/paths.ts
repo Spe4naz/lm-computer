@@ -32,6 +32,11 @@ export class PathGuard {
     return new PathGuard(absolute, real);
   }
 
+  /** The symlink-resolved root used for containment checks. */
+  get realRoot(): string {
+    return this.rootReal;
+  }
+
   async resolve(input: string | undefined | null): Promise<string> {
     const raw = (input ?? "").trim();
     if (raw.includes("\0")) {

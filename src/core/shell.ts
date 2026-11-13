@@ -9,7 +9,10 @@ export class DangerousCommandError extends Error {
 
 const DENY_RULES: Array<{ pattern: RegExp; label: string }> = [
   {
-    pattern: /(^|[;&|]\s*)(sudo|doas|pkexec|su)\b/,
+    // Match the commands anywhere in the line: `env sudo`, `/usr/bin/sudo`
+    // and `bash -c 'sudo …'` bypassed the old anchor-based rule. This remains
+    // a speed bump, not a sandbox: encoded or scripted commands can still hide.
+    pattern: /\b(sudo|doas|pkexec|su)\b/i,
     label: "privilege escalation",
   },
   { pattern: /\bmkfs(\.[a-z0-9]+)?\b/i, label: "filesystem formatting" },
@@ -58,6 +61,67 @@ export interface ShellOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * Environment handed to a shell command. LM Studio and the standalone service
+ * inherit internal variables (`LMS_PLUGIN_CLIENT_PASSKEY`, proxy credentials,
+ * SSH agent sockets) that must never become visible to the model through
+ * `env` or `printenv`.
+ */
+const SAFE_ENV_KEYS = new Set([
+  "path",
+  "home",
+  "user",
+  "username",
+  "logname",
+  "shell",
+  "lang",
+  "language",
+  "lc_all",
+  "lc_ctype",
+  "lc_messages",
+  "lc_numeric",
+  "lc_time",
+  "term",
+  "tmpdir",
+  "tmp",
+  "temp",
+  "tz",
+  "display",
+  "wayland_display",
+  "xdg_runtime_dir",
+  "xdg_config_home",
+  "xdg_data_home",
+  "xdg_cache_home",
+  "xdg_data_dirs",
+  "systemroot",
+  "windir",
+  "systemdrive",
+  "comspec",
+  "pathext",
+  "userprofile",
+  "appdata",
+  "localappdata",
+  "programdata",
+  "programfiles",
+  "programfiles(x86)",
+  "number_of_processors",
+  "processor_architecture",
+  "os",
+  "driverdata",
+]);
+
+export function buildShellEnv(
+  source: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value === undefined) continue;
+    if (!SAFE_ENV_KEYS.has(key.toLowerCase())) continue;
+    env[key] = value;
+  }
+  return env;
+}
+
 export interface ShellResult {
   command: string;
   cwd: string;
@@ -89,7 +153,7 @@ export async function runShell(options: ShellOptions): Promise<ShellResult> {
 
     const child = spawn(shell, args, {
       cwd: options.cwd,
-      env: { ...process.env },
+      env: buildShellEnv(),
       detached: !isWindows && process.platform !== "win32",
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],

@@ -5,6 +5,8 @@ import { PathGuard } from "./paths";
 const MAX_WRITE_BYTES = 5 * 1024 * 1024;
 const MAX_READ_BYTES = 1024 * 1024;
 const MAX_LIST_ENTRIES = 500;
+const MAX_SEARCH_VISITED = 10_000;
+const MAX_SEARCH_MS = 5_000;
 
 export interface FileEntry {
   name: string;
@@ -46,9 +48,11 @@ export class FileTools {
     const result: FileEntry[] = [];
     for (const entry of entries.slice(0, MAX_LIST_ENTRIES)) {
       const full = path.join(absolute, entry.name);
-      let st: Awaited<ReturnType<typeof fs.stat>>;
+      let st: Awaited<ReturnType<typeof fs.lstat>>;
       try {
-        st = await fs.stat(full);
+        // lstat, not stat: listing must not follow a symlink and expose the
+        // size/mtime of a target outside the workspace.
+        st = await fs.lstat(full);
       } catch {
         continue;
       }
@@ -171,7 +175,17 @@ export class FileTools {
       throw new Error("Destination already exists. Pass overwrite=true to replace it.");
     }
     await fs.mkdir(path.dirname(target), { recursive: true });
-    await fs.rename(source, target);
+    try {
+      await fs.rename(source, target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
+      // rename() cannot cross filesystems (e.g. workspace on another mount).
+      if (overwrite && (await exists(target))) {
+        await fs.rm(target, { recursive: true, force: true });
+      }
+      await fs.cp(source, target, { recursive: true, force: overwrite });
+      await fs.rm(source, { recursive: true, force: true });
+    }
     return {
       from: this.guard.relative(source),
       to: this.guard.relative(target),
@@ -210,12 +224,17 @@ export class FileTools {
     const limit = Math.max(1, Math.min(200, maxResults));
     const matcher = glob ? globToRegExp(glob) : null;
     const results: Array<{ path: string; matches?: Array<{ line: number; text: string }> }> = [];
+    const deadline = Date.now() + MAX_SEARCH_MS;
+    let visited = 0;
 
     const walk = async (dir: string, depth: number): Promise<void> => {
       if (results.length >= limit || depth > 8) return;
+      if (visited >= MAX_SEARCH_VISITED || Date.now() > deadline) return;
       const entries = await fs.readdir(dir, { withFileTypes: true });
       for (const entry of entries) {
         if (results.length >= limit) return;
+        if (visited >= MAX_SEARCH_VISITED || Date.now() > deadline) return;
+        visited += 1;
         if (entry.name === ".git" || entry.name === "node_modules") continue;
         const full = path.join(dir, entry.name);
         const rel = this.guard.relative(full);

@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  assertWorkspaceAllowed,
   configPath,
   DEFAULT_CONFIG,
   loadConfig,
@@ -41,8 +42,7 @@ afterEach(async () => {
   await rm(workspace, { recursive: true, force: true });
 });
 
-describe("config ports", () => {
-  it("uses split REST and MCP defaults", async () => {
+describe("config ports", () => {  it("uses split REST and MCP defaults", async () => {
     const config = await loadConfig(home, { workspace });
     expect(config.port).toBe(DEFAULT_CONFIG.port);
     expect(config.mcpPort).toBe(DEFAULT_CONFIG.mcpPort);
@@ -138,5 +138,22 @@ describe("config ports", () => {
     expect(stored.mcpPort).toBe(5237);
     expect(stored.apiEnabled).toBe(true);
     expect(stored.mcpEnabled).toBe(true);
+  });
+});
+
+describe("workspace policy", () => {
+  it("rejects the filesystem root", () => {
+    const root = path.parse(process.cwd()).root;
+    expect(() => assertWorkspaceAllowed(root, [home])).toThrow();
+  });
+
+  it("accepts a directory inside an allowed root", () => {
+    const candidate = path.join(home, "work");
+    expect(assertWorkspaceAllowed(candidate, [home])).toBe(path.resolve(candidate));
+  });
+
+  it("rejects a sibling or parent path", () => {
+    expect(() => assertWorkspaceAllowed(workspace, [home])).toThrow();
+    expect(() => assertWorkspaceAllowed(path.dirname(home), [home])).toThrow();
   });
 });

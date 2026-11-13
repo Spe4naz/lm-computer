@@ -108,6 +108,16 @@ Environment=LM_COMPUTER_HOME=$HOME/.config/lm-computer
 PassEnvironment=DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR
 Restart=on-failure
 RestartSec=3
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 [Install]
 WantedBy=default.target

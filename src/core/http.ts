@@ -6,6 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { ComputerService } from "./service";
 import { ToolInputError } from "./service";
+import { WorkspaceNotAllowedError } from "../config";
 import { VERSION } from "../version";
 
 const MAX_JSON_BODY = 8 * 1024 * 1024;
@@ -144,7 +145,7 @@ export class HttpApi {
     res: ServerResponse,
   ): Promise<void> {
     const url = new URL(req.url ?? "/", "http://localhost");
-    this.setCors(res);
+    this.setCors(req, res);
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);
@@ -240,7 +241,10 @@ export class HttpApi {
     try {
       await this.routeApi(req, res, url);
     } catch (error) {
-      const status = error instanceof ToolInputError ? 400 : 500;
+      const status =
+        error instanceof ToolInputError || error instanceof WorkspaceNotAllowedError
+          ? 400
+          : 500;
       this.sendJson(res, status, { ok: false, error: errorMessage(error) });
     }
   }
@@ -256,9 +260,8 @@ export class HttpApi {
 
   private shutdown(res: ServerResponse): void {
     this.sendJson(res, 200, { ok: true, message: "shutting down" });
-    this.service.cancelAll();
     setTimeout(() => {
-      void this.service.stopHttp();
+      void this.service.shutdown();
     }, 50);
   }
 
@@ -526,8 +529,19 @@ export class HttpApi {
     });
   }
 
-  private setCors(res: ServerResponse): void {
-    res.setHeader("Access-Control-Allow-Origin", "*");
+  private setCors(req: IncomingMessage, res: ServerResponse): void {
+    // Native clients (LM Chat, opencode) do not need CORS. A wildcard origin
+    // on a Bearer-authenticated API let any web page read responses once it
+    // knew the token; only an explicit allowlist is reflected now.
+    const origin = String(req.headers.origin ?? "");
+    if (!origin) return;
+    const allowed = (process.env.LM_COMPUTER_CORS_ORIGINS ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (!allowed.includes(origin)) return;
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
     res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   }

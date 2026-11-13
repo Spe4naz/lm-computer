@@ -74,6 +74,87 @@ export function configPath(homeDir: string): string {
   return path.join(homeDir, "config.json");
 }
 
+export class WorkspaceNotAllowedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WorkspaceNotAllowedError";
+  }
+}
+
+function isInside(root: string, candidate: string): boolean {
+  const rel =
+    process.platform === "win32"
+      ? path.relative(root.toLowerCase(), candidate.toLowerCase())
+      : path.relative(root, candidate);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+/**
+ * Roots the workspace may live under. By default only the current user's home
+ * directory; set `LM_COMPUTER_ALLOWED_ROOTS` (path-delimiter separated) for
+ * e.g. an external drive. The filesystem root is never accepted.
+ */
+export function allowedWorkspaceRoots(
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const roots = [path.resolve(os.homedir())];
+  const extra = env.LM_COMPUTER_ALLOWED_ROOTS?.trim();
+  if (extra) {
+    for (const part of extra.split(path.delimiter)) {
+      const value = part.trim();
+      if (value) roots.push(path.resolve(expandHome(value)));
+    }
+  }
+  return roots;
+}
+
+/**
+ * Rejects a workspace change that would turn `fs_write`/`fs_append` into
+ * unrestricted writes. `PUT /api/config` used to accept `/`.
+ */
+export function assertWorkspaceAllowed(
+  workspace: string,
+  roots: string[] = allowedWorkspaceRoots(),
+): string {
+  const resolved = path.resolve(expandHome(workspace));
+  const filesystemRoot = path.parse(resolved).root;
+  if (resolved === filesystemRoot) {
+    throw new WorkspaceNotAllowedError(
+      "Workspace cannot be the filesystem root. Choose a directory inside your home folder.",
+    );
+  }
+  if (!roots.some((root) => isInside(path.resolve(root), resolved))) {
+    throw new WorkspaceNotAllowedError(
+      `Workspace must stay inside an allowed root (${roots.join(", ")}). ` +
+        "Set LM_COMPUTER_ALLOWED_ROOTS to allow another location.",
+    );
+  }
+  return resolved;
+}
+
+/**
+ * Resolves the deepest existing ancestor and appends the missing tail. The
+ * caller can validate the real location before `mkdir()` follows a symlinked
+ * parent.
+ */
+export async function resolveWorkspaceRealPath(workspace: string): Promise<string> {
+  let current = path.resolve(expandHome(workspace));
+  const tail: string[] = [];
+  for (;;) {
+    try {
+      const real = await fs.realpath(current);
+      return tail.length === 0 ? real : path.join(real, ...tail.reverse());
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
+      const parent = path.dirname(current);
+      if (parent === current) throw error;
+      tail.push(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
 export function tokenPath(homeDir: string): string {
   return path.join(homeDir, "token.txt");
 }

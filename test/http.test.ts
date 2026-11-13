@@ -78,8 +78,7 @@ describe("split listeners", () => {
     }
   });
 
-  it("rejects /mcp on the REST port with a hint", async () => {
-    const res = await fetch(apiUrl("/mcp"), {
+  it("rejects /mcp on the REST port with a hint", async () => {    const res = await fetch(apiUrl("/mcp"), {
       method: "POST",
       headers: { ...auth, "Content-Type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
@@ -114,6 +113,24 @@ describe("split listeners", () => {
       result?: { serverInfo?: { name?: string } };
     };
     expect(body.result?.serverInfo?.name).toBe("lm-computer");
+  });
+
+  it("does not reflect CORS for an arbitrary origin", async () => {
+    const res = await fetch(apiUrl("/api/health"), {
+      headers: { Origin: "https://evil.example" },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("rejects a workspace outside the allowed roots", async () => {
+    const root = path.parse(workspace).root;
+    const res = await fetch(apiUrl("/api/config"), {
+      method: "PUT",
+      headers: { ...auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ workspace: root }),
+    });
+    expect(res.status).toBe(400);
   });
 
   it("stops every listener through the MCP port", async () => {

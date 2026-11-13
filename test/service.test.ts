@@ -3,6 +3,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { ComputerService } from "../src/core/service";
+import { WorkspaceNotAllowedError } from "../src/config";
+
 
 let home: string;
 let workspace: string;
@@ -35,6 +37,13 @@ afterAll(async () => {
 });
 
 describe("ComputerService tools", () => {
+  it("refuses to switch the workspace to the filesystem root", async () => {
+    const root = path.parse(workspace).root;
+    await expect(service.updateConfig({ workspace: root })).rejects.toBeInstanceOf(
+      WorkspaceNotAllowedError,
+    );
+  });
+
   it("writes, reads, lists and searches files", async () => {
     const write = await service.executeTool(
       "fs_write",

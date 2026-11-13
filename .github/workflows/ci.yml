@@ -5,6 +5,9 @@ on:
     branches: ["**"]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -21,6 +24,10 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev
+        continue-on-error: true
 
       - name: Build
         run: npm run build

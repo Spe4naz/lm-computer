@@ -1,10 +1,12 @@
 import { spawn } from "node:child_process";
 import { z } from "zod";
 import {
+  assertWorkspaceAllowed,
   auditPath,
   defaultHomeDir,
   loadConfig,
   publicConfig,
+  resolveWorkspaceRealPath,
   saveConfig,
   type ComputerConfig,
   type PublicConfig,
@@ -96,7 +98,16 @@ export class ComputerService implements ToolRuntime {
   static async create(options: ServiceOptions = {}): Promise<ComputerService> {
     const homeDir = options.homeDir ?? defaultHomeDir();
     const config = await loadConfig(homeDir, options.config);
+    // A workspace that comes from config.json or the environment is untrusted:
+    // a symlink there must not turn the file tools into access to `/`. Tests
+    // and embedders that pass an explicit workspace are trusted.
+    if (options.config?.workspace === undefined) {
+      assertWorkspaceAllowed(await resolveWorkspaceRealPath(config.workspace));
+    }
     const guard = await PathGuard.create(config.workspace);
+    if (options.config?.workspace === undefined) {
+      assertWorkspaceAllowed(guard.realRoot);
+    }
     return new ComputerService(homeDir, config, guard);
   }
 
@@ -171,6 +182,20 @@ export class ComputerService implements ToolRuntime {
     this.events.add("cancel_all", {});
   }
 
+  /**
+   * Cancels pending approvals and running shells, waits for the children to
+   * exit, and then stops the HTTP listeners. `systemctl --user stop` used to
+   * leave `shell_run` children running because only `stopHttp()` was called.
+   */
+  async shutdown(graceMs = 5000): Promise<void> {
+    this.cancelAll();
+    const deadline = Date.now() + Math.max(0, graceMs);
+    while (this.activeShells.size > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    await this.stopHttp();
+  }
+
   async startHttp(): Promise<ListenersStatus> {
     if (this.http) return this.http.status();
     const { HttpApi } = await import("./http");
@@ -206,7 +231,14 @@ export class ComputerService implements ToolRuntime {
   async updateConfig(patch: Partial<ComputerConfig>): Promise<PublicConfig> {
     const next: ComputerConfig = { ...this._config };
     if (patch.workspace !== undefined) {
+      // Validate before PathGuard.create(), which creates missing directories.
+      // Resolve symlinked parents first so mkdir() cannot create a directory
+      // outside the allowed roots.
+      assertWorkspaceAllowed(await resolveWorkspaceRealPath(patch.workspace));
       const guard = await PathGuard.create(patch.workspace);
+      // Resolve symlinks before accepting the new root, then check the real
+      // path: a workspace symlinked to `/` must not be accepted.
+      assertWorkspaceAllowed(guard.realRoot);
       this._guard = guard;
       this._files = new FileTools(guard);
       next.workspace = guard.root;

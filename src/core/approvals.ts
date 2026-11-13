@@ -26,6 +26,7 @@ interface PendingApproval {
   timer: NodeJS.Timeout;
   zenity?: ChildProcess;
   zenityTimer?: NodeJS.Timeout;
+  zenityAttempted?: boolean;
   abortListener?: () => void;
   settle: (outcome: ApprovalOutcome) => void;
 }
@@ -148,10 +149,14 @@ export class ApprovalManager {
 
       this.pending.set(request.id, entry);
 
-      if (this.options.zenityFallback && !this.options.isAppActive()) {
-        entry.zenityTimer = setTimeout(() => {
-          if (this.pending.has(request.id)) this.showZenity(entry);
-        }, this.options.zenityDelayMs ?? 1000);
+      if (this.options.zenityFallback) {
+        // Re-check instead of testing isAppActive() once: the app may stop
+        // polling after the request was created, and then zenity must appear.
+        entry.zenityTimer = setInterval(() => {
+          if (!this.pending.has(request.id) || entry.zenityAttempted) return;
+          if (!this.options.isAppActive()) this.showZenity(entry);
+        }, this.options.zenityDelayMs ?? 3000);
+        entry.zenityTimer.unref?.();
       }
     });
   }
@@ -179,6 +184,7 @@ export class ApprovalManager {
   }
 
   private showZenity(entry: PendingApproval): void {
+    entry.zenityAttempted = true;
     const request = entry.request;
     const text = [
       `LM Computer: ${request.tool}`,
